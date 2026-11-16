@@ -17,9 +17,12 @@ let mangle (s : string) : string =
     | c -> Buffer.add_string b (Printf.sprintf "_x%02x" (Char.code c))) s;
   Buffer.contents b
 
+(* グローバルの Python 識別子 (PyGlobal g の印字と、Extract Constant の束縛で共通) *)
+let global_ident (s : string) : string = "g_" ^ mangle s
+
 let pident = function
   | PyLocal n -> "v" ^ string_of_int n
-  | PyGlobal g -> "g_" ^ mangle (string_of_char_list g)
+  | PyGlobal g -> global_ident (string_of_char_list g)
 
 (* Python の文字列リテラル (ダブルクォート)。OCaml の %S は使わない
    (10 進エスケープが Python と意味が違うため)。 *)

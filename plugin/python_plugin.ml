@@ -2,7 +2,7 @@
 
     使い方:
       Declare ML Module "rocq-runtime.plugins.extraction".
-      Declare ML Module "rocq-python-plugin.plugin".
+      Declare ML Module "rocq-python-plugin".
       Extraction Language Python.
       Extraction "out.py" foo.
 
@@ -23,12 +23,17 @@ and decls_of_module_expr = function
   | MEfunctor _ -> []   (* 未適用の functor は捨てる (json.ml と同じ) *)
   | MEident _ | MEapply _ -> assert false
 
+(** 翻訳した宣言を、Extract Constant の束縛行 (あれば) の後ろに並べて出力する。
+    [Convert.customs] は、直前の [Convert.conv_decl] の呼び出しで集まったもの。 *)
 let render (m : Pycert_translate.pymodule) : Pp.t =
-  let lines = Py_print.lines_of_module m in
+  let prelude =
+    List.rev_map (fun (id, code) -> Py_print.global_ident id ^ " = " ^ code) !Convert.customs in
+  let lines = prelude @ Py_print.lines_of_module m in
   Pp.(v 0 (prlist_with_sep Common.fnl str lines) ++ Common.fnl ())
 
 (** 全宣言を一度に翻訳する (fresh 変数のカウンタを 0 から通す) *)
 let pp_struct (table : Common.State.t) (mls : ml_structure) : Pp.t =
+  Convert.customs := [];
   let mdecls =
     List.concat_map (fun (mp, sel) ->
       Common.State.with_visibility table mp [] (fun table ->
@@ -39,6 +44,7 @@ let pp_struct (table : Common.State.t) (mls : ml_structure) : Pp.t =
   render (Pycert_translate.tr_prog 0 mdecls)
 
 let pp_decl (table : Common.State.t) (d : ml_decl) : Pp.t =
+  Convert.customs := [];
   match Convert.conv_decl table d with
   | None -> Pp.mt ()
   | Some md -> render (Pycert_translate.tr_prog 0 [md])

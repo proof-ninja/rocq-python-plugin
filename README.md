@@ -41,7 +41,7 @@ print(sample.g_map(succ)(xs))   # [1; 2] = ("Cons", ("S", ("O",)), ("Cons", ("S"
 ### TODO
 
 - [ ] float、primitive string、primitive array
-- [ ] `Extract Constant` / `Extract Inductive` による名前の置き換え
+- [ ] `Extract Inductive` による名前の置き換え
 - [ ] `Extraction Library` (複数ファイルへの抽出)
 
 ## 証明事項

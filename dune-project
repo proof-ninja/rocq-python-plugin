@@ -1,9 +1,15 @@
 (lang dune 3.21)
 (using rocq 0.11)
 
+(name rocq-python-plugin)
+
 (generate_opam_files true)
 
 (license MIT)
+(authors "Yoshihiro Imai")
+(maintainers "Yoshihiro Imai")
+(source
+ (github proof-ninja/rocq-python-plugin))
 
 (package
  (name rocq-python-plugin)

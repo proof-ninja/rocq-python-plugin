@@ -23,12 +23,24 @@ let z_of_zarith (n : Z.t) : T.z =
   | 1 -> T.Zpos (positive_of_zarith n)
   | _ -> T.Zneg (positive_of_zarith (Z.neg n))
 
+(** [Extract Constant] で与えられた定数: (Rocq 側の識別子, Python の式)。
+    出力の冒頭に [g_<識別子> = <式>] の束縛として出力される (python_plugin.ml)。
+    式はカリー化された 1 引数関数でなければならない (Python subset の呼び出し規約)。
+    これらは検証されない (信頼の基盤)。[pp_struct] ごとに空にして集め直す。 *)
+let customs : (string * string) list ref = ref []
+
 (** 名前は Common.pp_global (Rocq 本体の名前解決・衝突回避) に従う。
     [pp_struct] はドライランと本番の 2 回呼ばれるので、どちらでも同じ呼び出しをする。 *)
 let name (table : Common.State.t) (kind : Common.kind) (g : global) : char list =
-  if Table.is_custom g then
-    unsupported "Extract Constant / Extract Inductive (custom names)"
-  else char_list_of_string (Common.pp_global table kind g)
+  let id = Common.pp_global table kind g in
+  if Table.is_custom g then begin
+    match kind with
+    | Common.Term ->
+        if not (List.mem_assoc id !customs) then
+          customs := (id, Table.find_custom g) :: !customs;
+        char_list_of_string id
+    | _ -> unsupported "Extract Inductive / Extract Inlined Constant on constructors"
+  end else char_list_of_string id
 
 let rec conv (table : Common.State.t) (a : ml_ast) : T.mexpr =
   match a with
@@ -63,6 +75,10 @@ and conv_branch table ((ids, pat, body) : ml_branch) : T.mbranch =
 let conv_decl (table : Common.State.t) (d : ml_decl) : T.mdecl option =
   match d with
   | Dind _ | Dtype _ -> None
+  | Dterm (r, _, _) when Table.is_custom r ->
+      (* Extract Constant された定数の宣言。本体 (公理) は捨て、束縛を [customs] に登録する
+         (宣言は参照より前に来るが、束縛は出力の冒頭にまとめて出す)。 *)
+      ignore (name table Common.Term r); None
   | Dterm (r, a, _) -> Some (T.MDTerm (name table Common.Term r, conv table a))
   | Dfix (rv, defs, _) ->
       Some (T.MDFix (List.map (name table Common.Term) (Array.to_list rv),
