@@ -1,0 +1,6 @@
+-Q _build/default/theories RocqPython
+
+theories/MiniML.v
+theories/MiniMLSem.v
+theories/Translate.v
+theories/Correct.v

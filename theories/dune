@@ -1,0 +1,5 @@
+; PyCert (Python の構文・意味論) は別リポジトリ (opam パッケージ rocq-pycert)。
+(rocq.theory
+ (name RocqPython)
+ (package rocq-python-plugin)
+ (theories PyCert Stdlib))

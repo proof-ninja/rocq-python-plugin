@@ -1,0 +1,30 @@
+; ラッパー Python.v をコンパイルして、.vo をインストールする。
+;
+; rocq.theory の (plugins <同じプロジェクトのライブラリ>) は、dune 3.23.1 で
+; 内部エラー (Anomaly: "The `directory' directive is required in this META definition")
+; になるため使わず、明示的な rule でコンパイルする。
+;
+; - プラグインの META と .cmxs だけに依存させる。パッケージ全体 ((package ...)) に
+;   依存させると、この .vo 自身のインストールと循環する。
+; - OCAMLPATH にビルド中のインストール用ツリーを渡して、Python.v の
+;   Declare ML Module がプラグインを見つけられるようにする。
+(rule
+ (targets Python.vo Python.glob)
+ (deps
+  Python.v
+  %{lib:rocq-python-plugin:META}
+  %{lib:rocq-python-plugin:python_plugin.cmxs})
+ (action
+  (setenv
+   OCAMLPATH
+   %{project_root}/../install/default/lib:%{env:OCAMLPATH=}
+   (run rocq compile -Q . PythonPlugin Python.v))))
+
+; 利用者は From PythonPlugin Require Import Python. で使える。
+(install
+ (package rocq-python-plugin)
+ (section lib_root)
+ (files
+  (Python.vo as coq/user-contrib/PythonPlugin/Python.vo)
+  (Python.glob as coq/user-contrib/PythonPlugin/Python.glob)
+  (Python.v as coq/user-contrib/PythonPlugin/Python.v)))

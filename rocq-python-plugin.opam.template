@@ -1,0 +1,5 @@
+# rocq-pycert は opam リポジトリに未公開なので、GitHub のものをピンして使う。
+# dune-projectから自動生成される.opamは *.opam.templateファイルがある場合勝手にそれを含める
+pin-depends: [
+  ["rocq-pycert.dev" "git+https://github.com/proof-ninja/PyCert.git"]
+]

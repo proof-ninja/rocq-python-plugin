@@ -1,0 +1,13 @@
+(library
+ (name python_plugin)
+ (public_name rocq-python-plugin)
+ (synopsis "Python extraction language for Rocq")
+ (flags (:standard -w -39 -warn-error -a))
+ (libraries rocq-runtime.plugins.extraction zarith))
+
+; theories/Translate.v の翻訳 tr_prog を OCaml に Extraction して、
+; pycert_translate.ml(i) を生成する (上のライブラリが使う)。
+(rocq.extraction
+ (prelude Extract)
+ (extracted_modules pycert_translate)
+ (theories RocqPython PyCert Stdlib))
