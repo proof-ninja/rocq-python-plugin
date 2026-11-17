@@ -15,7 +15,7 @@ Import ListNotations.
 
     Python の変数名は、束縛の入れ子の深さで決まる ([Translate.v])。 *)
 
-Inductive value_relation : mval -> pval -> Prop :=
+Inductive value_relation : ml_val -> py_val -> Prop :=
 | VR_cons g vs pvs :
     values_relation vs pvs -> value_relation (VCons g vs) (PyVTuple (PyVStr g :: pvs))
 | VR_uint n :
@@ -32,7 +32,7 @@ Inductive value_relation : mval -> pval -> Prop :=
     translate_aux (nesting_depth env) (MLfix i defs) = PyLetRec fs i ->
     value_relation (VFix env defs i) (PyVRec py_env fs i)
 
-with values_relation : list mval -> list pval -> Prop :=
+with values_relation : list ml_val -> list py_val -> Prop :=
 | VsR_nil : values_relation [] []
 | VsR_cons v pv vs pvs :
     value_relation v pv -> values_relation vs pvs ->
@@ -48,7 +48,7 @@ with environment_relation : environment -> penv -> Prop :=
     environment_relation ml_env py_env
 
 (** 局所環境: 先頭の値は、それより古い値の数 ([length vs]) を番号とする変数 *)
-with locals_relation : list mval -> penv -> Prop :=
+with locals_relation : list ml_val -> penv -> Prop :=
 | LR_nil py_env : locals_relation [] py_env
 | LR_cons v vs py_env pv :
     plookup (PyLocal (length vs)) py_env = Some pv -> value_relation v pv ->
@@ -62,7 +62,7 @@ with globals_relation : genv -> penv -> Prop :=
     globals_relation G py_env.
 
 (** 評価結果の対応 (成功なら値が対応し、例外なら同じメッセージ) *)
-Definition result_relation (ml_result : result mval) (py_result : result pval) : Prop :=
+Definition result_relation (ml_result : result ml_val) (py_result : result py_val) : Prop :=
   match ml_result, py_result with
   | Ok v, Ok pv => value_relation v pv
   | Error m, Error m' => m = m'
@@ -114,7 +114,7 @@ Parameter well_formed_program : list ml_decl -> Prop.
 
     [Extraction Constant] の項は、Python のソースの文字列として、出力の冒頭に
     [g_<名前> = <式>] で出力される。翻訳器は、その式も、Rocq の公理の本体も見ない
-    ([pyexpr] で表現しない。検証の対象外)。そこで、定理は、初期のグローバル環境を引数にとる:
+    ([py_expr] で表現しない。検証の対象外)。そこで、定理は、初期のグローバル環境を引数にとる:
 
     - [ml_globals0] (MiniML 側) と [py_env0] (Python 側) が、[globals_relation] で対応する
       ([Extraction Constant] した項の Python の値が、MiniML 側の値に対応するという、

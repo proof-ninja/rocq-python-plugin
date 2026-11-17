@@ -1,0 +1,31 @@
+// translate_correct の図 (README に載せる)。
+//   描き直し: dot -Tsvg etc/translate_correct.dot -o etc/translate_correct.svg
+//   実線 = 前提 (すでに成り立っているもの)、破線 = 結論 (示すもの)。
+digraph translate_correct {
+  rankdir=TB;
+  nodesep=1.6;
+  ranksep=1.3;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=14, width=1.4, height=0.8, fixedsize=true];
+  edge [fontname="Helvetica", fontsize=12];
+  labelloc=b;
+  fontname="Helvetica";
+  fontsize=12;
+
+
+  // MiniML 側 (上) と Python 側 (下)
+  ml_expr [group=left, label="ml_ast", fillcolor="#dbeafe", color="#2563eb"];
+  v       [group=right, label="ml_val", fillcolor="#dbeafe", color="#2563eb"];
+  py_expr [group=left, label="py_expr", fillcolor="#fef3c7", color="#d97706"];
+  pv      [group=right, label="py_val",      fillcolor="#fef3c7", color="#d97706"];
+
+  { rank=same; ml_expr; v; }
+  { rank=same; py_expr; pv; }
+
+  // 前提 (実線)
+  ml_expr -> v       [label="evaluate"];
+  ml_expr -> py_expr [label="translate"];
+
+  // 結論 (破線)
+  py_expr -> pv      [label="pyevaluate", style=dashed];
+  v -> pv            [label="value_relation", style=dashed, dir=none];
+}

@@ -17,11 +17,11 @@ From RocqPython Require Import MiniML.
 Import ListNotations.
 
 (** 例外を投げる式: 補助関数の呼び出し [raise_("msg")] *)
-Definition py_raise (msg : string) : pyexpr :=
+Definition py_raise (msg : string) : py_expr :=
   PyCall (PyName PyRuntimeRaise) (PyStr msg).
 
 (** [lams [x1; x2] body] は [lambda x1: lambda x2: body] *)
-Fixpoint lams (xs : list pident) (body : pyexpr) : pyexpr :=
+Fixpoint lams (xs : list pident) (body : py_expr) : py_expr :=
   match xs with
   | [] => body
   | x :: rest => PyLambda x (lams rest body)
@@ -31,19 +31,19 @@ Fixpoint lams (xs : list pident) (body : pyexpr) : pyexpr :=
     [bind_fields t [x1; x2] body] は [(lambda x1: lambda x2: body)(t[1])(t[2])]。
     フィールドの取り出し [t[i]] は、すべて lambda の外で評価されるので、[x1] が [t] と
     同じ名前でも、問題ない。 *)
-Definition bind_fields (t : pident) (xs : list pident) (body : pyexpr) : pyexpr :=
+Definition bind_fields (t : pident) (xs : list pident) (body : py_expr) : py_expr :=
   fold_left PyCall
     (map (fun i => PySubscript (PyName t) (PyInt (Z.of_nat (S i)))) (seq 0 (length xs)))
     (lams xs body).
 
 (** 再帰の本体。[depth] は、いまスコープにある局所変数 (束縛) の個数。 *)
-Fixpoint translate_aux (depth : nat) (ml_expr : ml_ast) {struct ml_expr} : pyexpr :=
+Fixpoint translate_aux (depth : nat) (ml_expr : ml_ast) {struct ml_expr} : py_expr :=
   match ml_expr with
   | MLrel n => PyName (PyLocal (depth - n))
   | MLlam body => PyLambda (PyLocal depth) (translate_aux (S depth) body)
   | MLapp f args =>
       fold_left PyCall
-        ((fix go (es : list ml_ast) : list pyexpr :=
+        ((fix go (es : list ml_ast) : list py_expr :=
             match es with
             | [] => []
             | e1 :: rest => translate_aux depth e1 :: go rest
@@ -55,7 +55,7 @@ Fixpoint translate_aux (depth : nat) (ml_expr : ml_ast) {struct ml_expr} : pyexp
   | MLcons g args =>
       PyTuple
         (PyStr g ::
-         (fix go (es : list ml_ast) : list pyexpr :=
+         (fix go (es : list ml_ast) : list py_expr :=
             match es with
             | [] => []
             | e1 :: rest => translate_aux depth e1 :: go rest
@@ -67,7 +67,7 @@ Fixpoint translate_aux (depth : nat) (ml_expr : ml_ast) {struct ml_expr} : pyexp
          最後は match failure の例外 (MiniML では stuck なので定理には影響しない) *)
       let t := PyLocal depth in
       let chain :=
-        (fix go (bs : list ml_branch) {struct bs} : pyexpr :=
+        (fix go (bs : list ml_branch) {struct bs} : py_expr :=
            match bs with
            | [] => py_raise "match failure"%string
            | (ids, p, body) :: rest =>
@@ -108,7 +108,7 @@ Fixpoint translate_aux (depth : nat) (ml_expr : ml_ast) {struct ml_expr} : pyexp
   end.
 
 (** 局所変数のない (閉じた) 式の翻訳。深さ 0 から始める。 *)
-Definition translate (ml_expr : ml_ast) : pyexpr := translate_aux 0 ml_expr.
+Definition translate (ml_expr : ml_ast) : py_expr := translate_aux 0 ml_expr.
 
 (** トップレベルの Dfix: 関数名はグローバル、引数は v0 *)
 Fixpoint translate_global_defs (gs : list global) (es : list ml_ast) : list pydef :=

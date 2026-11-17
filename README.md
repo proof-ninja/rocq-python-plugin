@@ -59,6 +59,8 @@ MiniML の式 `ml_expr` が、グローバル環境 `ml_globals` だけの環境
 評価される (`Ok v`) なら、`ml_expr` を翻訳した Python の式を、対応する Python の環境 `py_env` で評価すると、
 `v` に対応する値 `pv` になる。
 
+![translate_correct の図](etc/translate_correct.svg)
+
 ### TODO
 
 - [ ] `translate_correct` の証明

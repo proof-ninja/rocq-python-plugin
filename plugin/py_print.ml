@@ -1,4 +1,4 @@
-(** Python subset (Pycert_translate.pyexpr / pystmt) の印字。
+(** Python subset (Pycert_translate.py_expr / pystmt) の印字。
     ここは信頼の基盤 (TCB) に含まれる。ノードは Python の ast ノード (Name, Tuple,
     Subscript, Compare, IfExp, Call, Lambda) に 1 対 1 で対応する (例外: PyLetRec)。
     例外は、出力の冒頭の補助関数 raise_ ([runtime_prelude]) の呼び出しで表す。
@@ -66,7 +66,7 @@ let newline (ind : int) : string = "\n" ^ String.make ind ' '
 
 (* [ind]: 現在の行のインデント (半角空白の数)。改行するとき、[ind + 4] に揃える。
    後置 ([..] や (..)) の対象になる式は、括弧で囲まれた式・名前・呼び出し・添字。 *)
-let rec pyexpr (ind : int) (e : pyexpr) : string =
+let rec py_expr (ind : int) (e : py_expr) : string =
   match e with
   | PyName x -> pident x
   | PyNone -> "None"
@@ -75,17 +75,17 @@ let rec pyexpr (ind : int) (e : pyexpr) : string =
       if String.length s > 0 && s.[0] = '-' then "(" ^ s ^ ")" else s
   | PyStr s -> py_string (string_of_char_list s)
   | PyTuple [] -> "()"
-  | PyTuple [e] -> "(" ^ pyexpr ind e ^ ",)"
-  | PyTuple es -> "(" ^ String.concat ", " (List.map (pyexpr ind) es) ^ ")"
-  | PySubscript (e, idx) -> head ind e ^ "[" ^ pyexpr ind idx ^ "]"
-  | PyCompare (l, PyEq, r) -> "(" ^ pyexpr ind l ^ " == " ^ pyexpr ind r ^ ")"
-  | PyCall (f, a) -> head ind f ^ "(" ^ pyexpr ind a ^ ")"
+  | PyTuple [e] -> "(" ^ py_expr ind e ^ ",)"
+  | PyTuple es -> "(" ^ String.concat ", " (List.map (py_expr ind) es) ^ ")"
+  | PySubscript (e, idx) -> head ind e ^ "[" ^ py_expr ind idx ^ "]"
+  | PyCompare (l, PyEq, r) -> "(" ^ py_expr ind l ^ " == " ^ py_expr ind r ^ ")"
+  | PyCall (f, a) -> head ind f ^ "(" ^ py_expr ind a ^ ")"
   | PyLambda (x, body) ->
-      "(lambda " ^ pident x ^ ":" ^ newline (ind + 4) ^ pyexpr (ind + 4) body ^ ")"
+      "(lambda " ^ pident x ^ ":" ^ newline (ind + 4) ^ py_expr (ind + 4) body ^ ")"
   | PyIfExp (test, body, orelse) ->
-      "(" ^ pyexpr (ind + 4) body
-      ^ newline (ind + 4) ^ "if " ^ pyexpr (ind + 4) test
-      ^ newline (ind + 4) ^ "else " ^ pyexpr (ind + 4) orelse ^ ")"
+      "(" ^ py_expr (ind + 4) body
+      ^ newline (ind + 4) ^ "if " ^ py_expr (ind + 4) test
+      ^ newline (ind + 4) ^ "else " ^ py_expr (ind + 4) orelse ^ ")"
   | PyLetRec (fs, i) ->
       (* 関数名は walrus (:=) で束縛する。名前が兄弟の式と衝突しないよう、すぐ呼ぶ lambda の
          中に閉じ込める:
@@ -103,12 +103,12 @@ let rec pyexpr (ind : int) (e : pyexpr) : string =
 
 and def_walrus ind (PyDef (f, x, body)) =
   "(" ^ pident f ^ " := lambda " ^ pident x ^ ":" ^ newline (ind + 4)
-  ^ pyexpr (ind + 4) body ^ ")"
+  ^ py_expr (ind + 4) body ^ ")"
 
 and head ind e =
   match e with
-  | PyNone | PyInt _ -> "(" ^ pyexpr ind e ^ ")"
-  | _ -> pyexpr ind e
+  | PyNone | PyInt _ -> "(" ^ py_expr ind e ^ ")"
+  | _ -> py_expr ind e
 
 (* 出力の冒頭に置く補助関数。[PyRuntimeRaise] ([raise_]) の定義 (Python の [raise] は文で、
    式にならないため、関数にして呼び出す)。 *)
@@ -119,9 +119,9 @@ let runtime_prelude : string list =
    改行できるように)。 *)
 let stmt (s : pystmt) : string list =
   match s with
-  | PyAssign (x, e) -> [pident x ^ " = (" ^ pyexpr 4 e ^ ")"]
+  | PyAssign (x, e) -> [pident x ^ " = (" ^ py_expr 4 e ^ ")"]
   | PyDefs fs ->
       List.map (fun (PyDef (f, x, body)) ->
-        pident f ^ " = (lambda " ^ pident x ^ ":" ^ newline 4 ^ pyexpr 4 body ^ ")") fs
+        pident f ^ " = (lambda " ^ pident x ^ ":" ^ newline 4 ^ py_expr 4 body ^ ")") fs
 
 let lines_of_module (m : pystmt list) : string list = List.concat_map stmt m

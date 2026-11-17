@@ -13,8 +13,8 @@ From PyCert Require Import Common.
 From RocqPython Require Import MiniML.
 Import ListNotations.
 
-Inductive mval : Type :=
-| VCons (g : global) (vs : list mval)
+Inductive ml_val : Type :=
+| VCons (g : global) (vs : list ml_val)
 | VUint (n : Z)
 | VDummy
 | VClos (env : environment) (body : ml_ast)
@@ -24,41 +24,41 @@ Inductive mval : Type :=
   (* [VGFix env gs bodies j]: トップレベルの fix 群 (名前 gs) の j 番目の関数。 *)
 
 with environment : Type :=
-| Environment (locals : list mval) (globals : list (global * mval)).
+| Environment (locals : list ml_val) (globals : list (global * ml_val)).
 
-Definition locals_of (env : environment) : list mval :=
+Definition locals_of (env : environment) : list ml_val :=
   match env with Environment l _ => l end.
 
 (** グローバル環境: 後から追加したものが先頭で、先頭から検索する。 *)
-Definition globals_of (env : environment) : list (global * mval) :=
+Definition globals_of (env : environment) : list (global * ml_val) :=
   match env with Environment _ g => g end.
 
 (** 束縛の入れ子の深さ: スコープにある局所変数の数。翻訳は、これで Python の変数名を決める。 *)
 Definition nesting_depth (env : environment) : nat := length (locals_of env).
 
-Definition genv := list (global * mval).
+Definition genv := list (global * ml_val).
 
 (** 局所変数のない環境 (トップレベルの式を評価するときの環境) *)
 Definition init_env (globals : genv) : environment := Environment [] globals.
 
-Fixpoint glookup (G : genv) (g : global) : option mval :=
+Fixpoint glookup (G : genv) (g : global) : option ml_val :=
   match G with
   | [] => None
   | (h, v) :: r => if String.eqb h g then Some v else glookup r g
   end.
 
-Definition lookup_global (env : environment) (g : global) : option mval :=
+Definition lookup_global (env : environment) (g : global) : option ml_val :=
   glookup (globals_of env) g.
 
 (** 局所環境の先頭に値を 1 つ / 複数 加える。 *)
-Definition push (v : mval) (env : environment) : environment :=
+Definition push (v : ml_val) (env : environment) : environment :=
   Environment (v :: locals_of env) (globals_of env).
 
-Definition push_all (vs : list mval) (env : environment) : environment :=
+Definition push_all (vs : list ml_val) (env : environment) : environment :=
   Environment (vs ++ locals_of env) (globals_of env).
 
 (** fix 群の関数を表す値の列。最後の関数が先頭 (= index 1)。 *)
-Definition fix_values (env : environment) (defs : list ml_ast) : list mval :=
+Definition fix_values (env : environment) (defs : list ml_ast) : list ml_val :=
   rev (map (fun j => VFix env defs j) (seq 0 (length defs))).
 
 (** トップレベルの fix 群を加えたグローバル環境 *)
@@ -69,8 +69,8 @@ Definition gfix_globals (env : environment) (gs : list global) (bodies : list ml
 (** 最初にマッチする分岐を探す。返り値は (分岐で追加する環境, 本体)。
     最後の引数が先頭 (= index 1) になるので [rev vs]。
     タグが同じで変数の個数が違う分岐は、評価できない (stuck)。 *)
-Fixpoint find_branch (g : global) (vs : list mval) (brs : list ml_branch)
-  : option (list mval * ml_ast) :=
+Fixpoint find_branch (g : global) (vs : list ml_val) (brs : list ml_branch)
+  : option (list ml_val * ml_ast) :=
   match brs with
   | [] => None
   | (ids, p, b) :: rest =>
@@ -84,7 +84,7 @@ Fixpoint find_branch (g : global) (vs : list mval) (brs : list ml_branch)
   end.
 
 (** 式の評価 *)
-Inductive evaluate : environment -> ml_ast -> result mval -> Prop :=
+Inductive evaluate : environment -> ml_ast -> result ml_val -> Prop :=
 | eval_rel env n v :
     0 < n -> nth_error (locals_of env) (pred n) = Some v ->
     evaluate env (MLrel n) (Ok v)
@@ -122,7 +122,7 @@ Inductive evaluate : environment -> ml_ast -> result mval -> Prop :=
     evaluate env (MLuint n) (Ok (VUint n))
 
 (** 式の列を左から右へ評価する (コンストラクタの引数) *)
-with evaluate_list : environment -> list ml_ast -> result (list mval) -> Prop :=
+with evaluate_list : environment -> list ml_ast -> result (list ml_val) -> Prop :=
 | eval_list_nil env :
     evaluate_list env [] (Ok [])
 | eval_list_cons env e es v vs :
@@ -135,7 +135,7 @@ with evaluate_list : environment -> list ml_ast -> result (list mval) -> Prop :=
     evaluate_list env (e :: es) (Error m)
 
 (** 関数値 [vf] に、引数の式を 1 つずつ評価しては適用していく (カリー化された適用) *)
-with evaluate_application : environment -> mval -> list ml_ast -> result mval -> Prop :=
+with evaluate_application : environment -> ml_val -> list ml_ast -> result ml_val -> Prop :=
 | app_nil env vf :
     evaluate_application env vf [] (Ok vf)
 | app_cons env vf a rest va vf' r :
@@ -149,7 +149,7 @@ with evaluate_application : environment -> mval -> list ml_ast -> result mval ->
     evaluate_application env vf (a :: rest) (Error m)
 
 (** 関数値に、値を 1 つ適用する *)
-with apply_closure : mval -> mval -> result mval -> Prop :=
+with apply_closure : ml_val -> ml_val -> result ml_val -> Prop :=
 | apply_clos env b v r :
     evaluate (push v env) b r -> apply_closure (VClos env b) v r
 | apply_fix env defs i b v r :
