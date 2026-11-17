@@ -1,158 +1,133 @@
-(** MiniML → Python subset の翻訳。
+(** MiniML → Python subset の翻訳。MiniML の式を、Python の **式** に翻訳する。
 
-    ANF 風: 関数適用・コンストラクタ・let・case の部分式は、すべて新しい
-    局所変数に左から右へ順に代入してから使う。これにより MiniML の評価順
-    (左から右) を保つ。MiniML の [MRel] (1 始まり) は、文脈 [ctx] (先頭が
-    index 1) から Python の変数名に写す。
+    - [let x = e1 in e2] は [(lambda x: e2')(e1')]、関数は [lambda]、分岐は [if] 式、
+      例外は式として投げる、再帰関数の群は [PyLetRec]。
+    - 関数適用 [f a b] は [f'(a')(b')] (Python と同じ評価順は、MiniMLSem.v で合わせてある)。
+    - **Python の変数名は、束縛の入れ子の深さ [depth] で決まる**: [depth] 個の束縛が
+      スコープにあるとき、MiniML の [MLrel n] (1 始まり。1 が直前の束縛) は、
+      Python の変数 [v(depth - n)] になる。新しく束縛する変数は [v(depth)]。
+      そのため、変数名の表も、新しい名前を作るカウンタも要らない。
 
-    [k] は fresh な [PyLocal] 用のカウンタで、使うたびに増やして返す。
-
-    注: [list mexpr] / [list mbranch] を走査する部分は、Rocq の構造再帰の
+    注: [list ml_ast] / [list ml_branch] を走査する部分は、Rocq の構造再帰の
     制約 (入れ子型の要素が部分項と認められるのは局所 [fix] 内のみ) により、
-    [tr] の中の局所 [fix] として書いている。 *)
+    [translate_aux] の中の局所 [fix] として書いている。 *)
 From Stdlib Require Import String ZArith List.
 From PyCert Require Import Common Python.
 From RocqPython Require Import MiniML.
 Import ListNotations.
 
-(** 結果の置き先 *)
-Inductive dest : Type :=
-| TRet                    (* return する (関数末尾) *)
-| TAssign (x : pident).   (* x に代入する *)
+(** 例外を投げる式: 補助関数の呼び出し [raise_("msg")] *)
+Definition py_raise (msg : string) : pyexpr :=
+  PyCall (PyName PyRuntimeRaise) (PyStr msg).
 
-Definition finish (d : dest) (a : pyexpr) : list pystmt :=
-  match d with
-  | TRet => [PyReturn a]
-  | TAssign x => [PyAssign x a]
+(** [lams [x1; x2] body] は [lambda x1: lambda x2: body] *)
+Fixpoint lams (xs : list pident) (body : pyexpr) : pyexpr :=
+  match xs with
+  | [] => body
+  | x :: rest => PyLambda x (lams rest body)
   end.
 
-Fixpoint tr (d : dest) (ctx : list pident) (k : nat) (e : mexpr) {struct e}
-  : nat * list pystmt :=
-  match e with
-  | MRel n => (k, finish d (PyName (nth (pred n) ctx (PyLocal 0))))
-  | MLam b =>
-      (* クロージャは直前の def に巻き上げる *)
-      let f := PyLocal k in
-      let x := PyLocal (S k) in
-      let '(k1, body) := tr TRet (x :: ctx) (S (S k)) b in
-      (k1, PyDefs [PyDef f x body] :: finish d (PyName f))
-  | MApp f args =>
-      let tf := PyLocal k in
-      let '(k1, s1) := tr (TAssign tf) ctx (S k) f in
-      (* 各引数を fresh 変数に左から右へ代入し、その変数の列を得る *)
-      let '(k2, s2, as_) :=
-        (fix go (k : nat) (es : list mexpr) {struct es}
-           : nat * list pystmt * list pyexpr :=
-           match es with
-           | [] => (k, [], [])
-           | e1 :: rest =>
-               let t := PyLocal k in
-               let '(k1, s1) := tr (TAssign t) ctx (S k) e1 in
-               let '(k2, s2, ts) := go k1 rest in
-               (k2, s1 ++ s2, PyName t :: ts)
-           end) k1 args in
-      (k2, s1 ++ s2 ++ finish d (fold_left PyCall as_ (PyName tf)))
-  | MLet e1 e2 =>
-      let x := PyLocal k in
-      let '(k1, s1) := tr (TAssign x) ctx (S k) e1 in
-      let '(k2, s2) := tr d (x :: ctx) k1 e2 in
-      (k2, s1 ++ s2)
-  | MGlob g => (k, finish d (PyName (PyGlobal g)))
-  | MCons g args =>
-      let '(k1, s1, as_) :=
-        (fix go (k : nat) (es : list mexpr) {struct es}
-           : nat * list pystmt * list pyexpr :=
-           match es with
-           | [] => (k, [], [])
-           | e1 :: rest =>
-               let t := PyLocal k in
-               let '(k1, s1) := tr (TAssign t) ctx (S k) e1 in
-               let '(k2, s2, ts) := go k1 rest in
-               (k2, s1 ++ s2, PyName t :: ts)
-           end) k args in
-      (k1, s1 ++ finish d (PyCon g as_))
-  | MCase s brs =>
-      let ts := PyLocal k in
-      let '(k1, ss) := tr (TAssign ts) ctx (S k) s in
-      (* 分岐列: ts のタグで if/else の連鎖にする。
-         最後は match failure の raise (MiniML では stuck なので定理には影響しない) *)
-      let '(k2, ib) :=
-        (fix go (k : nat) (bs : list mbranch) {struct bs}
-           : nat * list pystmt :=
+(** コンストラクタの引数 (フィールド) を、[PySubscript] で取り出して、順に変数に束縛する:
+    [bind_fields t [x1; x2] body] は [(lambda x1: lambda x2: body)(t[1])(t[2])]。
+    フィールドの取り出し [t[i]] は、すべて lambda の外で評価されるので、[x1] が [t] と
+    同じ名前でも、問題ない。 *)
+Definition bind_fields (t : pident) (xs : list pident) (body : pyexpr) : pyexpr :=
+  fold_left PyCall
+    (map (fun i => PySubscript (PyName t) (PyInt (Z.of_nat (S i)))) (seq 0 (length xs)))
+    (lams xs body).
+
+(** 再帰の本体。[depth] は、いまスコープにある局所変数 (束縛) の個数。 *)
+Fixpoint translate_aux (depth : nat) (ml_expr : ml_ast) {struct ml_expr} : pyexpr :=
+  match ml_expr with
+  | MLrel n => PyName (PyLocal (depth - n))
+  | MLlam body => PyLambda (PyLocal depth) (translate_aux (S depth) body)
+  | MLapp f args =>
+      fold_left PyCall
+        ((fix go (es : list ml_ast) : list pyexpr :=
+            match es with
+            | [] => []
+            | e1 :: rest => translate_aux depth e1 :: go rest
+            end) args)
+        (translate_aux depth f)
+  | MLletin e1 e2 =>
+      PyCall (PyLambda (PyLocal depth) (translate_aux (S depth) e2)) (translate_aux depth e1)
+  | MLglob g => PyName (PyGlobal g)
+  | MLcons g args =>
+      PyTuple
+        (PyStr g ::
+         (fix go (es : list ml_ast) : list pyexpr :=
+            match es with
+            | [] => []
+            | e1 :: rest => translate_aux depth e1 :: go rest
+            end) args)
+  | MLcase scrutinee branches =>
+      (* 値を 1 度だけ評価して t に束縛し、t のタグで if 式の連鎖にする。t は、MiniML の
+         変数ではないが、次に束縛される変数と同じ名前 v(depth) を使う (t の使用は、
+         その変数が束縛される lambda の外だけなので、衝突しない)。
+         最後は match failure の例外 (MiniML では stuck なので定理には影響しない) *)
+      let t := PyLocal depth in
+      let chain :=
+        (fix go (bs : list ml_branch) {struct bs} : pyexpr :=
            match bs with
-           | [] => (k, [PyRaise "match failure"%string])
-           | MBr p n body :: rest =>
+           | [] => py_raise "match failure"%string
+           | (ids, p, body) :: rest =>
                match p with
-               | MPUsual g =>
-                   let xs := map PyLocal (seq k n) in
-                   let binds :=
-                     map (fun ix => PyAssign (snd ix) (PyField (PyName ts) (S (fst ix))))
-                         (combine (seq 0 n) xs) in
-                   (* 最後の引数が index 1 *)
-                   let '(k1, sb) := tr d (rev xs ++ ctx) (k + n) body in
-                   let '(k2, sr) := go k1 rest in
-                   (k2, [PyIfCon (PyName ts) g (binds ++ sb) sr])
-               | MPWild => tr d ctx k body
+               | Pusual g =>
+                   (* フィールドは v(depth) .. v(depth + n - 1)。最後の引数が index 1 *)
+                   let n := length ids in
+                   let xs := map PyLocal (seq depth n) in
+                   PyIfExp
+                     (PyCompare (PySubscript (PyName t) (PyInt 0)) PyEq (PyStr g))
+                     (bind_fields t xs (translate_aux (depth + n) body)) (go rest)
+               | Pwild => translate_aux depth body
                end
-           end) k1 brs in
-      (k2, ss ++ ib)
-  | MFix i defs =>
+           end) branches in
+      PyCall (PyLambda t chain) (translate_aux depth scrutinee)
+  | MLfix i defs =>
+      (* 関数 j は v(depth + j)、引数は v(depth + n)。最後の関数が index 2、引数が index 1。
+         本体が [MLlam] でないものは MiniML では適用時に stuck なので、
+         Python では例外を投げる本体にしておく。 *)
       let n := length defs in
-      let names := map PyLocal (seq k n) in
-      (* 最後の def が index 1 *)
-      let fixctx := rev names ++ ctx in
-      (* 各 def を関数名 (names の先頭から順) に対応させて def にする。
-         本体が [MLam] でないものは MiniML では適用時に stuck なので、
-         Python では raise する本体にしておく。 *)
-      let '(k1, pds) :=
-        (fix go (k : nat) (ns : list pident) (es : list mexpr) {struct es}
-           : nat * list pdef :=
-           match es with
-           | [] => (k, [])
-           | e1 :: rest =>
-               let f := hd (PyLocal 0) ns in
-               let x := PyLocal k in
-               let '(k1, body) :=
-                 match e1 with
-                 | MLam b => tr TRet (x :: fixctx) (S k) b
-                 | _ => (S k, [PyRaise "unsupported fix body"%string])
-                 end in
-               let '(k2, ds) := go k1 (tl ns) rest in
-               (k2, PyDef f x body :: ds)
-           end) (k + n) names defs in
-      (k1, PyDefs pds :: finish d (PyName (nth i names (PyLocal 0))))
-  | MExn m => (k, [PyRaise m])
-  | MDummy => (k, finish d PyNone)
-  | MMagic e1 => tr d ctx k e1
-  | MUint n => (k, finish d (PyInt n))
+      PyLetRec
+        ((fix go (j : nat) (es : list ml_ast) {struct es} : list pydef :=
+            match es with
+            | [] => []
+            | e1 :: rest =>
+                PyDef (PyLocal (depth + j)) (PyLocal (depth + n))
+                  (match e1 with
+                   | MLlam b => translate_aux (S (depth + n)) b
+                   | _ => py_raise "unsupported fix body"%string
+                   end)
+                :: go (S j) rest
+            end) 0 defs)
+        i
+  | MLexn m => py_raise m
+  | MLdummy => PyNone
+  | MLmagic e1 => translate_aux depth e1
+  | MLuint n => PyInt n
   end.
 
-(** トップレベルの MDFix: 関数名はグローバル、本体の文脈は引数のみ *)
-Fixpoint tr_gdefs (k : nat) (gs : list global) (es : list mexpr)
-  : nat * list pdef :=
+(** 局所変数のない (閉じた) 式の翻訳。深さ 0 から始める。 *)
+Definition translate (ml_expr : ml_ast) : pyexpr := translate_aux 0 ml_expr.
+
+(** トップレベルの Dfix: 関数名はグローバル、引数は v0 *)
+Fixpoint translate_global_defs (gs : list global) (es : list ml_ast) : list pydef :=
   match gs, es with
   | g :: gs', e :: es' =>
-      let x := PyLocal k in
-      let '(k1, body) :=
-        match e with
-        | MLam b => tr TRet [x] (S k) b
-        | _ => (S k, [PyRaise "unsupported fix body"%string])
-        end in
-      let '(k2, ds) := tr_gdefs k1 gs' es' in
-      (k2, PyDef (PyGlobal g) x body :: ds)
-  | _, _ => (k, [])
+      PyDef (PyGlobal g) (PyLocal 0)
+        (match e with
+         | MLlam b => translate_aux 1 b
+         | _ => py_raise "unsupported fix body"%string
+         end)
+      :: translate_global_defs gs' es'
+  | _, _ => []
   end.
 
-Definition tr_decl (k : nat) (d : mdecl) : nat * list pystmt :=
+Definition translate_decl (d : ml_decl) : list pystmt :=
   match d with
-  | MDTerm g e => tr (TAssign (PyGlobal g)) [] k e
-  | MDFix gs es => let '(k1, ds) := tr_gdefs k gs es in (k1, [PyDefs ds])
+  | Dterm g e => [PyAssign (PyGlobal g) (translate e)]
+  | Dfix gs es => [PyDefs (translate_global_defs gs es)]
   end.
 
-Fixpoint tr_prog (k : nat) (ds : mprogram) : pymodule :=
-  match ds with
-  | [] => []
-  | d :: rest =>
-      let '(k1, s) := tr_decl k d in
-      s ++ tr_prog k1 rest
-  end.
+Definition translate_program (ds : list ml_decl) : pymodule :=
+  flat_map translate_decl ds.

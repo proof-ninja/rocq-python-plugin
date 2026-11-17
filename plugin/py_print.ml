@@ -1,5 +1,14 @@
-(** Python subset (Pycert_translate.pystmt) の印字。
-    ここは信頼の基盤 (TCB) に含まれる。各ノードは Python 構文 1 つに 1 対 1 で対応する。 *)
+(** Python subset (Pycert_translate.pyexpr / pystmt) の印字。
+    ここは信頼の基盤 (TCB) に含まれる。ノードは Python の ast ノード (Name, Tuple,
+    Subscript, Compare, IfExp, Call, Lambda) に 1 対 1 で対応する (例外: PyLetRec)。
+    例外は、出力の冒頭の補助関数 raise_ ([runtime_prelude]) の呼び出しで表す。
+
+    式は、すべて括弧で囲んで印字する (優先順位の誤りを避ける)。括弧の中の改行は、
+    Python では自由なので、読みやすさのために、lambda の本体や if 式の枝で改行する。 *)
+(* zarith の Z。[open Pycert_translate] は、Rocq の Z モジュール (Z.of_nat などを含む、
+   抽出されたもの) を持ち込み、zarith の [Z] を隠すので、先に別名を付けておく。 *)
+module BigInt = Z
+
 open Pycert_translate
 
 let string_of_char_list l = String.of_seq (List.to_seq l)
@@ -23,6 +32,7 @@ let global_ident (s : string) : string = "g_" ^ mangle s
 let pident = function
   | PyLocal n -> "v" ^ string_of_int n
   | PyGlobal g -> global_ident (string_of_char_list g)
+  | PyRuntimeRaise -> "raise_"
 
 (* Python の文字列リテラル (ダブルクォート)。OCaml の %S は使わない
    (10 進エスケープが Python と意味が違うため)。 *)
@@ -43,58 +53,75 @@ let py_string (s : string) : string =
   Buffer.contents b
 
 let rec zarith_of_positive = function
-  | XH -> Z.one
-  | XO p -> Z.shift_left (zarith_of_positive p) 1
-  | XI p -> Z.succ (Z.shift_left (zarith_of_positive p) 1)
+  | XH -> BigInt.one
+  | XO p -> BigInt.shift_left (zarith_of_positive p) 1
+  | XI p -> BigInt.succ (BigInt.shift_left (zarith_of_positive p) 1)
 
 let string_of_z = function
   | Z0 -> "0"
-  | Zpos p -> Z.to_string (zarith_of_positive p)
-  | Zneg p -> Z.to_string (Z.neg (zarith_of_positive p))
+  | Zpos p -> BigInt.to_string (zarith_of_positive p)
+  | Zneg p -> BigInt.to_string (BigInt.neg (zarith_of_positive p))
 
-(* 後置 ([..] や (..)) の対象になる式は、名前・呼び出し・添字・タプルのみ。
-   それ以外は括弧で囲む。 *)
-let rec pyexpr (e : pyexpr) : string =
+let newline (ind : int) : string = "\n" ^ String.make ind ' '
+
+(* [ind]: 現在の行のインデント (半角空白の数)。改行するとき、[ind + 4] に揃える。
+   後置 ([..] や (..)) の対象になる式は、括弧で囲まれた式・名前・呼び出し・添字。 *)
+let rec pyexpr (ind : int) (e : pyexpr) : string =
   match e with
   | PyName x -> pident x
   | PyNone -> "None"
-  | PyInt n -> string_of_z n
-  | PyCon (tag, []) -> "(" ^ py_string (string_of_char_list tag) ^ ",)"
-  | PyCon (tag, args) ->
-      "(" ^ String.concat ", " (py_string (string_of_char_list tag) :: List.map pyexpr args) ^ ")"
-  | PyField (e, i) -> head e ^ "[" ^ string_of_int i ^ "]"
-  | PyCall (f, a) -> head f ^ "(" ^ pyexpr a ^ ")"
+  | PyInt n ->
+      let s = string_of_z n in
+      if String.length s > 0 && s.[0] = '-' then "(" ^ s ^ ")" else s
+  | PyStr s -> py_string (string_of_char_list s)
+  | PyTuple [] -> "()"
+  | PyTuple [e] -> "(" ^ pyexpr ind e ^ ",)"
+  | PyTuple es -> "(" ^ String.concat ", " (List.map (pyexpr ind) es) ^ ")"
+  | PySubscript (e, idx) -> head ind e ^ "[" ^ pyexpr ind idx ^ "]"
+  | PyCompare (l, PyEq, r) -> "(" ^ pyexpr ind l ^ " == " ^ pyexpr ind r ^ ")"
+  | PyCall (f, a) -> head ind f ^ "(" ^ pyexpr ind a ^ ")"
+  | PyLambda (x, body) ->
+      "(lambda " ^ pident x ^ ":" ^ newline (ind + 4) ^ pyexpr (ind + 4) body ^ ")"
+  | PyIfExp (test, body, orelse) ->
+      "(" ^ pyexpr (ind + 4) body
+      ^ newline (ind + 4) ^ "if " ^ pyexpr (ind + 4) test
+      ^ newline (ind + 4) ^ "else " ^ pyexpr (ind + 4) orelse ^ ")"
+  | PyLetRec (fs, i) ->
+      (* 関数名は walrus (:=) で束縛する。名前が兄弟の式と衝突しないよう、すぐ呼ぶ lambda の
+         中に閉じ込める:
+           (lambda: ((f0 := lambda x0: ...), (f1 := lambda x1: ...))[i])()
+         (関数が 1 つのときは、タプルも添字も要らない) *)
+      let inner = ind + 8 in
+      let body =
+        match fs, i with
+        | [d], 0 -> def_walrus inner d
+        | _ ->
+            "(" ^ String.concat ("," ^ newline inner) (List.map (def_walrus inner) fs)
+            ^ ")[" ^ string_of_int i ^ "]"
+      in
+      "(lambda: " ^ body ^ ")()"
 
-and head e =
+and def_walrus ind (PyDef (f, x, body)) =
+  "(" ^ pident f ^ " := lambda " ^ pident x ^ ":" ^ newline (ind + 4)
+  ^ pyexpr (ind + 4) body ^ ")"
+
+and head ind e =
   match e with
-  | PyName _ | PyCon _ | PyField _ | PyCall _ -> pyexpr e
-  | PyNone | PyInt _ -> "(" ^ pyexpr e ^ ")"
+  | PyNone | PyInt _ -> "(" ^ pyexpr ind e ^ ")"
+  | _ -> pyexpr ind e
 
-(* 文を行のリストに印字する (indent は半角空白の数) *)
-let rec stmts (ind : int) (ss : pystmt list) : string list =
-  match ss with
-  | [] -> [String.make ind ' ' ^ "pass"]
-  | _ -> List.concat_map (stmt ind) ss
+(* 出力の冒頭に置く補助関数。[PyRuntimeRaise] ([raise_]) の定義 (Python の [raise] は文で、
+   式にならないため、関数にして呼び出す)。 *)
+let runtime_prelude : string list =
+  ["def raise_(m):"; "    raise Exception(m)"]
 
-and stmt (ind : int) (s : pystmt) : string list =
-  let pad = String.make ind ' ' in
+(* トップレベルの文を、行のリストに印字する。右辺は、全体を括弧で囲む (lambda の本体で
+   改行できるように)。 *)
+let stmt (s : pystmt) : string list =
   match s with
-  | PyAssign (x, e) -> [pad ^ pident x ^ " = " ^ pyexpr e]
-  | PyReturn e -> [pad ^ "return " ^ pyexpr e]
-  | PyRaise m -> [pad ^ "raise Exception(" ^ py_string (string_of_char_list m) ^ ")"]
+  | PyAssign (x, e) -> [pident x ^ " = (" ^ pyexpr 4 e ^ ")"]
   | PyDefs fs ->
-      List.concat_map (fun (PyDef (f, x, body)) ->
-        (pad ^ "def " ^ pident f ^ "(" ^ pident x ^ "):") :: stmts (ind + 4) body) fs
-  | PyIfCon (e, tag, t, f) -> if_chain ind "if" e tag t f
+      List.map (fun (PyDef (f, x, body)) ->
+        pident f ^ " = (lambda " ^ pident x ^ ":" ^ newline 4 ^ pyexpr 4 body ^ ")") fs
 
-and if_chain ind kw e tag t f =
-  let pad = String.make ind ' ' in
-  let cond = head e ^ "[0] == " ^ py_string (string_of_char_list tag) in
-  let head_line = pad ^ kw ^ " " ^ cond ^ ":" in
-  let then_lines = stmts (ind + 4) t in
-  match f with
-  | [PyIfCon (e2, tag2, t2, f2)] ->
-      (head_line :: then_lines) @ if_chain ind "elif" e2 tag2 t2 f2
-  | _ -> (head_line :: then_lines) @ ((pad ^ "else:") :: stmts (ind + 4) f)
-
-let lines_of_module (m : pystmt list) : string list = List.concat_map (stmt 0) m
+let lines_of_module (m : pystmt list) : string list = List.concat_map stmt m

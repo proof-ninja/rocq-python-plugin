@@ -49,19 +49,18 @@ print(sample.g_map(succ)(xs))   # [1; 2] = ("Cons", ("S", ("O",)), ("Cons", ("S"
 Rocq のプログラム (Extraction が出す MiniML) を Python に変換しても、意味が変わらない。
 
 ```rocq
-Theorem tr_correct :
-  forall G env e r,
-    ev G env e r ->
-    forall d ctx k k' ss penv,
-      tr d ctx k e = (k', ss) ->
-      env_rel ctx env penv ->
-      genv_rel G penv ->
-      fresh_from k penv ->
-      exists o, pexec_block penv ss o /\ out_rel d r o.
+Theorem translate_correct py_env ml_globals ml_expr v :
+  evaluate (init_env ml_globals) ml_expr (Ok v) ->
+  globals_relation ml_globals py_env ->
+  exists pv, pyevaluate py_env (translate ml_expr) (Ok pv) /\ value_relation v pv.
 ```
+
+MiniML の式 `ml_expr` が、グローバル環境 `ml_globals` だけの環境 (`init_env ml_globals`) のもとで値 `v` に
+評価される (`Ok v`) なら、`ml_expr` を翻訳した Python の式を、対応する Python の環境 `py_env` で評価すると、
+`v` に対応する値 `pv` になる。
 
 ### TODO
 
-- [ ] `tr_correct` の証明
-- [ ] `tr_prog_correct_ok` / `_err` の証明と、前提 `wf_prog` の定義 (現在は `Parameter`)
+- [ ] `translate_correct` の証明
+- [ ] `translate_program_correct` / `_error` の証明と、前提 `well_formed_program` の定義 (現在は `Parameter`)
 - [ ] 発散と Python の再帰上限の扱い (今は評価が成功する場合のみ)

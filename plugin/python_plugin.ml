@@ -7,7 +7,8 @@
       Extraction "out.py" foo.
 
     処理の流れ:
-      ml_ast --Convert--> mexpr --Pycert_translate.tr_prog (Rocq で検証)--> pystmt
+      Miniml.ml_ast --Convert--> Pycert_translate.ml_ast
+        --Pycert_translate.translate_program (Rocq で検証)--> pystmt
              --Py_print--> Python のソース *)
 open Extraction_plugin
 open Miniml
@@ -28,7 +29,7 @@ and decls_of_module_expr = function
 let render (m : Pycert_translate.pymodule) : Pp.t =
   let prelude =
     List.rev_map (fun (id, code) -> Py_print.global_ident id ^ " = " ^ code) !Convert.customs in
-  let lines = prelude @ Py_print.lines_of_module m in
+  let lines = Py_print.runtime_prelude @ prelude @ Py_print.lines_of_module m in
   Pp.(v 0 (prlist_with_sep Common.fnl str lines) ++ Common.fnl ())
 
 (** 全宣言を一度に翻訳する (fresh 変数のカウンタを 0 から通す) *)
@@ -41,13 +42,13 @@ let pp_struct (table : Common.State.t) (mls : ml_structure) : Pp.t =
           List.filter_map (Convert.conv_decl table) (decls_of_elem elem)) sel))
       mls
   in
-  render (Pycert_translate.tr_prog 0 mdecls)
+  render (Pycert_translate.translate_program mdecls)
 
 let pp_decl (table : Common.State.t) (d : ml_decl) : Pp.t =
   Convert.customs := [];
   match Convert.conv_decl table d with
   | None -> Pp.mt ()
-  | Some md -> render (Pycert_translate.tr_prog 0 [md])
+  | Some md -> render (Pycert_translate.translate_program [md])
 
 let preamble _table (_mod_name : Id.t) (comment : Pp.t option) _used _usf : Pp.t =
   let c = match comment with
